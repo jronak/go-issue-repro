@@ -1,6 +1,8 @@
 # HTTP2 Drops Conn-Level Flow Control Update
 Reproduce issue where HTTP2 drops connection-evel flow control update eventually starving client connection from writing data frames and hangs client connection forever.
 
+Repro for https://github.com/golang/go/issues/54185 
+
 # What version of Go are you using (go version)?
 go version go1.18.3 darwin/amd64
 
