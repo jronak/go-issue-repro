@@ -1,4 +1,4 @@
-module http2-bug-repro
+module issue-54185
 
 go 1.18
 
