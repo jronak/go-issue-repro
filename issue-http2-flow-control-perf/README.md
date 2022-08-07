@@ -1,5 +1,5 @@
-# HTTP2: slow streams consuming entire request control flow can block other streams
-Slow streams which consume entire request control flow could potentially block/slow down other streams.
+# HTTP2: slow streams can potentially block other faster streams
+Slow stream(s) consuming entire client conn flow control window can block and slowdown other faster streams.
 
 # What version of Go are you using (go version)?
 go version go1.18.3 darwin/amd64
@@ -52,13 +52,13 @@ GOGCCFLAGS="-fPIC -arch x86_64 -m64 -pthread -fno-caret-diagnostics -Qunused-arg
 </details>
 
 # What did you do?
-I'm using a Go HTTP2 (h2c) server as an Echo server, where handler writes response immediately for requests with priority header `request-type=priority` otherwise delays reponse by 5s. I use HTTP2 client to dispatch two requests with 2MB payload each, and one of them has priority header set.
+I'm using a Go HTTP2 (h2c) server as an Echo server, where handler writes response immediately for requests with priority header `request-type=priority` otherwise delays response by 5s. I use HTTP2 client to dispatch two concurrent requests with 2MB payload each, and one of them has priority header set.
 
 # What did you expect to see?
-Priority response must arrive immediately (since handler writes it read and writes immediately). Non-priority response must arrive after 5s delay.
+Priority response must arrive immediately. Non-priority response must arrive after 5s delay.
 
 # What did you see instead?
-Non-priority and priority responses arrived after 5s.
+Both non-priority and priority responses arrived after 5s. This should not have happened as HTTP2 streams on same connections must not interfere with each other.
 
 # Logs
 ```
@@ -71,11 +71,11 @@ high priority req response time: 5.023305906s   # expected this response immedia
 # Root Cause
 Pre-requiste: https://httpwg.org/specs/rfc7540.html#FlowControl
 
-HTTP2 server and client maintain a flow control window which is the maximum number of Data frame bytes each are willing to accept. Flow control is applied separately at the connection and stream level. Data frames cannot be forwarded when flow control has been exhausted, client/server must wait for WINDOW_UPDATE frame from other side to replinsh the window before trying to write DATA frame. 
+HTTP2 client and server maintain a flow control window which is the maximum number of Data frame bytes each are willing to accept. Flow control window is applied separately at the connection and stream level. Data frames cannot be forwarded when flow control has been exhausted, client/server must wait for WINDOW_UPDATE frame from other side to replenish the window before trying to write DATA frames. 
 
-HTTP2 server sets client flow control window size of [1MB](https://github.com/golang/net/blob/master/http2/server.go#L145). We dispatch two requests with 2MB payload in each, this exhausts the client side connection flow control window. HTTP2 server buffers the request payload internally and does not replinsh client conn & stream flow control window until server handler has read the buffered data. 
+Go HTTP2 server sets client flow control window size to [1MB](https://github.com/golang/net/blob/master/http2/server.go#L145). When dispatch two requests with 2MB payload in each, this exhausts the client side connection flow control window size of 1MB. HTTP2 server buffers the request payload internally and does not replenish client conn & stream flow control window until server handler has read the buffered data. 
 
-Since our handler delays reading payload from the low-priority request, which ends up holding WINDOW_UPDATE of connection and stream. This blocks client from sending the payload of high priority request as client connection flow control will not be replinshed until low-priority request payload is read.
+Since our handler delays reading payload from the low-priority request, this holds server from sending WINDOW_UPDATE for both connection and stream. This blocks client from sending the payload of the high priority request as client connection flow control will not be replenished until low-priority request payload is read.
 
 # Test Fix
 Below patch fixes the issue in HTTP2 server:
@@ -107,7 +107,7 @@ index 47524a6..bc8c6c1 100644
 
 ```
 
-Logs:
+Logs with fix:
 ```
 H2c Server starting on :8081
 high priority req response time: 28.067782ms # priority stream response arrived immediately.
